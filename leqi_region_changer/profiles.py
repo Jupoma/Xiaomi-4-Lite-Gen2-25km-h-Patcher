@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 from typing import Any, Final
 
+from .i18n import translate as tr
 
 SCHEMA_VERSION: Final = 1
 SUPPORTED_BAUDRATES: Final = frozenset({19_200, 115_200})
@@ -119,7 +120,7 @@ _BASELINE_DATA: Final = (
 
 def _require_exact_string(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
-        raise ProfileValidationError(f"{field} muss eine nicht leere, getrimmte Zeichenfolge sein")
+        raise ProfileValidationError(tr("profile_string", field=field))
     return value
 
 
@@ -127,15 +128,15 @@ def profile_from_mapping(raw: Mapping[str, Any]) -> ScooterProfile:
     """Validate and convert one schema-v1 mapping into an immutable profile."""
 
     if not isinstance(raw, Mapping):
-        raise ProfileValidationError("Die Profilwurzel muss ein JSON-Objekt sein")
+        raise ProfileValidationError(tr("profile_root"))
 
     keys = frozenset(raw.keys())
     missing = _PROFILE_KEYS - keys
     extra = keys - _PROFILE_KEYS
     if missing:
-        raise ProfileValidationError(f"Profilfelder fehlen: {', '.join(sorted(missing))}")
+        raise ProfileValidationError(tr("profile_missing", fields=", ".join(sorted(missing))))
     if extra:
-        raise ProfileValidationError(f"Unbekannte Profilfelder: {', '.join(sorted(extra))}")
+        raise ProfileValidationError(tr("profile_unknown", fields=", ".join(sorted(extra))))
 
     schema_version = raw["schema_version"]
     if (
@@ -143,32 +144,32 @@ def profile_from_mapping(raw: Mapping[str, Any]) -> ScooterProfile:
         or not isinstance(schema_version, int)
         or schema_version != SCHEMA_VERSION
     ):
-        raise ProfileValidationError(f"schema_version muss {SCHEMA_VERSION} sein")
+        raise ProfileValidationError(tr("profile_schema", version=SCHEMA_VERSION))
 
     profile_id = _require_exact_string(raw["id"], "id")
     if _PROFILE_ID_RE.fullmatch(profile_id) is None:
-        raise ProfileValidationError("id darf nur Kleinbuchstaben a-z, Ziffern und Unterstriche enthalten")
+        raise ProfileValidationError(tr("profile_id"))
 
     display_name = _require_exact_string(raw["display_name"], "display_name")
 
     baudrate = raw["baudrate"]
     if isinstance(baudrate, bool) or not isinstance(baudrate, int) or baudrate not in SUPPORTED_BAUDRATES:
         allowed = ", ".join(str(value) for value in sorted(SUPPORTED_BAUDRATES))
-        raise ProfileValidationError(f"baudrate muss einer dieser Werte sein: {allowed}")
+        raise ProfileValidationError(tr("profile_baud", values=allowed))
 
     protocol = raw["protocol"]
     if protocol != SUPPORTED_PROTOCOL:
-        raise ProfileValidationError(f"protocol muss {SUPPORTED_PROTOCOL!r} sein")
+        raise ProfileValidationError(tr("profile_protocol", protocol=SUPPORTED_PROTOCOL))
 
     wire_separator = raw["wire_separator"]
     if wire_separator not in ("", "/"):
-        raise ProfileValidationError("wire_separator muss eine leere Zeichenfolge oder '/' sein")
+        raise ProfileValidationError(tr("profile_separator"))
 
     raw_regions = raw["regions"]
     if not isinstance(raw_regions, Mapping):
-        raise ProfileValidationError("regions muss ein Objekt sein")
+        raise ProfileValidationError(tr("profile_regions_object"))
     if frozenset(raw_regions.keys()) != frozenset(REGION_CODES):
-        raise ProfileValidationError("regions muss genau DE, EU und US enthalten")
+        raise ProfileValidationError(tr("profile_regions_exact"))
 
     region_values: dict[str, str | None] = {}
     for region in REGION_CODES:
@@ -176,14 +177,14 @@ def profile_from_mapping(raw: Mapping[str, Any]) -> ScooterProfile:
         if prefix is not None and (
             not isinstance(prefix, str) or _REGION_PREFIX_RE.fullmatch(prefix) is None
         ):
-            raise ProfileValidationError(f"regions.{region} muss aus genau fünf Ziffern oder null bestehen")
+            raise ProfileValidationError(tr("profile_region_prefix", region=region))
         region_values[region] = prefix
 
     supported_prefixes = [value for value in region_values.values() if value is not None]
     if not supported_prefixes:
-        raise ProfileValidationError("Mindestens eine Region muss verfügbar sein")
+        raise ProfileValidationError(tr("profile_one_region"))
     if len(set(supported_prefixes)) != len(supported_prefixes):
-        raise ProfileValidationError("Verfügbare Regionspräfixe müssen eindeutig sein")
+        raise ProfileValidationError(tr("profile_unique_regions"))
 
     return ScooterProfile(
         schema_version=SCHEMA_VERSION,
@@ -212,7 +213,7 @@ def load_profile_file(path: str | Path) -> ScooterProfile:
     try:
         raw = json.loads(profile_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ProfileValidationError(f"{profile_path.name} konnte nicht gelesen werden: {exc}") from exc
+        raise ProfileValidationError(tr("profile_read", name=profile_path.name, error=exc)) from exc
     return profile_from_mapping(raw)
 
 
@@ -230,7 +231,7 @@ def _apply_profile_directory(
     if not directory.exists():
         return
     if not directory.is_dir():
-        diagnostics.append(f"{source_label} Profilpfad ist kein Ordner: {directory}")
+        diagnostics.append(tr("profile_path", source=source_label, path=directory))
         return
 
     directory_ids: set[str] = set()
@@ -238,12 +239,18 @@ def _apply_profile_directory(
         try:
             profile = load_profile_file(path)
         except ProfileValidationError as exc:
-            diagnostics.append(f"Ungültiges Profil {path.name} ({source_label}) wurde ignoriert: {exc}")
+            diagnostics.append(
+                tr("profile_invalid", name=path.name, source=source_label, error=exc)
+            )
             continue
         if profile.id in directory_ids:
             diagnostics.append(
-                f"Doppelte Profil-ID {profile.id!r} in {source_label} Profilen aus "
-                f"{path.name} wurde ignoriert"
+                tr(
+                    "profile_duplicate",
+                    profile=profile.id,
+                    source=source_label,
+                    name=path.name,
+                )
             )
             continue
         directory_ids.add(profile.id)
@@ -267,14 +274,14 @@ def load_profiles(
     diagnostics: list[str] = []
     _apply_profile_directory(
         bundled_dir,
-        source_label="eingebetteten",
+        source_label=tr("profile_source_bundled"),
         profiles=profiles,
         ordered_ids=ordered_ids,
         diagnostics=diagnostics,
     )
     _apply_profile_directory(
         external_dir,
-        source_label="externen",
+        source_label=tr("profile_source_external"),
         profiles=profiles,
         ordered_ids=ordered_ids,
         diagnostics=diagnostics,

@@ -32,10 +32,10 @@ class UiStateTests(unittest.TestCase):
         self.assertFalse(ready.updated(diagnostics_active=True).can_write)
 
     def test_block_reason_has_safety_order(self) -> None:
-        self.assertEqual(UiState(busy=True).block_reason(), "Eine Übertragung läuft.")
+        self.assertEqual(UiState(busy=True).block_reason(), "A transmission is in progress.")
         self.assertEqual(
             UiState(diagnostics_active=True).block_reason(),
-            "Beende zuerst die Diagnoseverbindung.",
+            "End the diagnostics connection first.",
         )
 
     def test_duplicate_display_names_are_disambiguated_by_profile_id(self) -> None:

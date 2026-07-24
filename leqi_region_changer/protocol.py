@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 from typing import Final
 
+from .i18n import translate as tr
 from .profiles import REGION_CODES, SUPPORTED_PROTOCOL, ScooterProfile
 
 
@@ -61,13 +62,10 @@ def crc16_xmodem(data: bytes) -> int:
 
 def _match_serial(serial: str) -> re.Match[str]:
     if not isinstance(serial, str):
-        raise SerialNumberError("Die Seriennummer muss eine Zeichenfolge sein")
+        raise SerialNumberError(tr("serial_type_error"))
     match = _SERIAL_RE.fullmatch(serial)
     if match is None:
-        raise SerialNumberError(
-            "Die Seriennummer muss aus fünf Ziffern und 14 Zeichen A-Z/0-9 bestehen; "
-            "optional ist genau ein Slash direkt nach dem fünfstelligen Präfix erlaubt"
-        )
+        raise SerialNumberError(tr("serial_format_error"))
     return match
 
 
@@ -96,33 +94,24 @@ def prepare_region_change(
 ) -> SerialTransaction:
     """Prepare a safe profile-aware serial-number region change.
 
-    The current serial's 14-character tail is retained. Unknown current
-    prefixes, unavailable regions, and no-op changes are deliberately blocked.
+    The current serial's 14-character tail is retained. Any syntactically
+    valid current prefix is accepted. Only unavailable target regions are
+    deliberately blocked.
     """
 
     if profile.protocol != SUPPORTED_PROTOCOL:
-        raise SerialTransactionError(f"Nicht unterstütztes Profilprotokoll: {profile.protocol!r}")
+        raise SerialTransactionError(tr("unsupported_protocol", protocol=profile.protocol))
     canonical_current = normalize_serial_number(current_serial)
-    current_prefix = canonical_current[:5]
     serial_tail = canonical_current[5:]
 
-    known_prefixes = {prefix for prefix in profile.regions.values() if prefix is not None}
-    if current_prefix not in known_prefixes:
-        raise SerialTransactionError(
-            f"Der aktuelle Seriennummernpräfix {current_prefix!r} passt nicht zum Profil {profile.id!r}"
-        )
     if target_region not in REGION_CODES:
-        raise SerialTransactionError(
-            f"Die Zielregion muss einer dieser Werte sein: {', '.join(REGION_CODES)}"
-        )
+        raise SerialTransactionError(tr("target_region_invalid", regions=", ".join(REGION_CODES)))
 
     target_prefix = profile.prefix_for(target_region)
     if target_prefix is None:
         raise SerialTransactionError(
-            f"Die Zielregion {target_region!r} ist für Profil {profile.id!r} nicht verfügbar"
+            tr("target_region_unavailable", region=target_region, profile=profile.id)
         )
-    if target_prefix == current_prefix:
-        raise SerialTransactionError("Die Zielregion entspricht bereits dem aktuellen Seriennummernpräfix")
 
     target_serial = f"{target_prefix}{serial_tail}"
     wire_serial = f"{target_prefix}{profile.wire_separator}{serial_tail}"

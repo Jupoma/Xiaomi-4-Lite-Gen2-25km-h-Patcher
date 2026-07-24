@@ -13,6 +13,8 @@ import threading
 import time
 from typing import Any, Callable, Mapping, Protocol
 
+from .i18n import translate as tr
+
 try:  # pyserial is an optional runtime dependency.
     import serial as _pyserial  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - depends on the host installation
@@ -72,8 +74,7 @@ class IncompleteWriteError(SerialTransportError):
         written: int,
     ) -> None:
         super().__init__(
-            f"Unvollständiger serieller Schreibvorgang in {phase}: "
-            f"{written} von {expected} Bytes",
+            tr("incomplete_write", phase=phase, written=written, expected=expected),
             port=port,
             phase=phase,
         )
@@ -98,7 +99,7 @@ _port_locks: dict[str, threading.Lock] = {}
 def _normalise_port_key(port: str) -> str:
     value = str(port).strip()
     if not value:
-        raise ValueError("port darf nicht leer sein")
+        raise ValueError(tr("port_empty"))
     return os.path.normcase(value)
 
 
@@ -123,7 +124,7 @@ def _acquire_port_lock(lock: threading.Lock, port: str):
     acquired = lock.acquire(timeout=PORT_LOCK_TIMEOUT_SECONDS)
     if not acquired:
         raise SerialTransportError(
-            "Der COM-Port wird bereits von Diagnose oder Schreibvorgang verwendet",
+            tr("port_locked"),
             port=port,
             phase="lock",
         )
@@ -145,7 +146,7 @@ def emit_event(sink: EventSink, event: SerialEvent) -> None:
     if callable(put):
         put(event)
         return
-    raise TypeError("event_sink muss Callback oder Queue mit put() sein")
+    raise TypeError(tr("event_sink_invalid"))
 
 
 def resolve_serial_factory(serial_factory: SerialFactory | None) -> SerialFactory:
@@ -155,7 +156,7 @@ def resolve_serial_factory(serial_factory: SerialFactory | None) -> SerialFactor
         return serial_factory
     if _pyserial is None:
         raise SerialDependencyError(
-            "pyserial ist nicht installiert",
+            tr("pyserial_missing"),
             port="",
             phase="dependency",
         )
@@ -173,7 +174,7 @@ def _write_and_flush(
         written_raw = serial_port.write(frame)
     except Exception as exc:
         raise SerialTransportError(
-            f"Serieller Write in {phase} fehlgeschlagen: {exc}",
+            tr("serial_write_failed", phase=phase, error=exc),
             port=port,
             phase=phase,
         ) from exc
@@ -191,7 +192,7 @@ def _write_and_flush(
         serial_port.flush()
     except Exception as exc:
         raise SerialTransportError(
-            f"Serielles Flush in {phase} fehlgeschlagen: {exc}",
+            tr("serial_flush_failed", phase=phase, error=exc),
             port=port,
             phase=f"{phase}_flush",
         ) from exc
@@ -219,14 +220,14 @@ def write_transaction(
     port_name = str(port).strip()
     _normalise_port_key(port_name)
     if isinstance(baudrate, bool) or not isinstance(baudrate, int) or baudrate <= 0:
-        raise ValueError("baudrate muss eine positive Ganzzahl sein")
+        raise ValueError(tr("baud_positive"))
 
     data = bytes(data_frame)
     commit = None if commit_frame is None else bytes(commit_frame)
     if not data:
-        raise ValueError("data_frame darf nicht leer sein")
+        raise ValueError(tr("data_frame_empty"))
     if commit_frame is not None and not commit:
-        raise ValueError("commit_frame darf nicht leer sein")
+        raise ValueError(tr("commit_frame_empty"))
 
     factory = resolve_serial_factory(serial_factory)
     lock = get_port_lock(port_name)
@@ -251,7 +252,7 @@ def write_transaction(
                 )
             except Exception as exc:
                 raise SerialTransportError(
-                    f"Serieller Port konnte nicht geöffnet werden: {exc}",
+                    tr("port_open_failed", error=exc),
                     port=port_name,
                     phase="open",
                 ) from exc
@@ -318,7 +319,7 @@ def write_transaction(
                     serial_port.close()
                 except Exception as exc:
                     close_error = SerialTransportError(
-                        f"Serieller Port konnte nicht geschlossen werden: {exc}",
+                        tr("port_close_failed", error=exc),
                         port=port_name,
                         phase="close",
                     )

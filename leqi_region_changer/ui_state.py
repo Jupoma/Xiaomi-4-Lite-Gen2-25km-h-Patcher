@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, replace
 
+from .i18n import translate as tr
 from .profiles import ScooterProfile
 
 
@@ -50,17 +51,17 @@ class UiState:
 
     def block_reason(self) -> str:
         if self.busy:
-            return "Eine Übertragung läuft."
+            return tr("block_busy")
         if self.diagnostics_active:
-            return "Beende zuerst die Diagnoseverbindung."
+            return tr("block_diagnostics")
         if not self.profile_selected:
-            return "Wähle ein Scooterprofil."
+            return tr("block_profile")
         if not self.port_selected:
-            return "Wähle einen COM-Port."
+            return tr("block_port")
         if not self.serial_valid:
-            return "Prüfe die vorhandene Seriennummer."
+            return tr("block_serial")
         if not self.target_region_selected:
-            return "Wähle eine neue Region."
+            return tr("block_region")
         if not self.acknowledged:
-            return "Bestätige Modell, Verkabelung und Seriennummer."
-        return "Bereit."
+            return tr("block_ack")
+        return tr("block_ready")

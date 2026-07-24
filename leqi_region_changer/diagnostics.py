@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any
 
+from .i18n import translate as tr
 from .serial_transport import (
     EventSink,
     SerialEvent,
@@ -172,13 +173,13 @@ class PassiveMonitor:
     ) -> None:
         port_name = str(port).strip()
         if not port_name:
-            raise ValueError("port darf nicht leer sein")
+            raise ValueError(tr("port_empty"))
         if isinstance(baudrate, bool) or not isinstance(baudrate, int) or baudrate <= 0:
-            raise ValueError("baudrate muss eine positive Ganzzahl sein")
+            raise ValueError(tr("baud_positive"))
         if read_size <= 0:
-            raise ValueError("read_size muss positiv sein")
+            raise ValueError(tr("read_size_positive"))
         if read_timeout < 0 or idle_sleep < 0:
-            raise ValueError("Timeouts dürfen nicht negativ sein")
+            raise ValueError(tr("timeouts_nonnegative"))
 
         self.port = port_name
         self.baudrate = baudrate
@@ -203,7 +204,7 @@ class PassiveMonitor:
 
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():
-                raise RuntimeError("Monitor läuft bereits")
+                raise RuntimeError(tr("monitor_running"))
             self._stop_event.clear()
             self._thread = threading.Thread(
                 target=self._run,

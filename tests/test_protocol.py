@@ -110,32 +110,64 @@ class PrepareTransactionTests(unittest.TestCase):
         self.assertEqual(transaction.write_frame, transaction.data_frame)
         self.assertEqual(transaction.commit_frame, COMMIT_FRAME)
 
-    def test_blocks_current_prefix_from_other_profile(self) -> None:
-        with self.assertRaisesRegex(SerialTransactionError, "passt nicht zum Profil"):
-            prepare_serial_transaction(
-                find_profile("elite"),
-                "66232DXAN2F5V101557",
-                "EU",
-            )
+    def test_accepts_unknown_current_prefix_and_preserves_tail(self) -> None:
+        transaction = prepare_serial_transaction(
+            find_profile("elite"),
+            "99999DXAN2F5V101557",
+            "EU",
+        )
+
+        self.assertEqual(transaction.current_serial, "99999DXAN2F5V101557")
+        self.assertEqual(transaction.target_serial, "60545DXAN2F5V101557")
+        self.assertEqual(transaction.wire_serial, "60545DXAN2F5V101557")
+        self.assertEqual(transaction.current_serial[5:], transaction.target_serial[5:])
+        self.assertEqual(transaction.baudrate, 19200)
+        self.assertEqual(transaction.data_frame, build_serial_write_frame(transaction.wire_serial))
+
+    def test_unknown_prefix_can_be_replaced_by_every_configured_target(self) -> None:
+        for profile_id in (
+            "4litegen2_itde_with_turn_signal",
+            "5_plus",
+            "elite",
+        ):
+            profile = find_profile(profile_id)
+            for target_region, target_prefix in profile.regions.items():
+                if target_prefix is None:
+                    continue
+                with self.subTest(profile=profile_id, region=target_region):
+                    transaction = prepare_region_change(
+                        profile,
+                        "99999DXAN2F5V101557",
+                        target_region,
+                    )
+                    self.assertEqual(transaction.target_serial[:5], target_prefix)
+                    self.assertEqual(transaction.target_serial[5:], "DXAN2F5V101557")
+                    self.assertEqual(
+                        transaction.wire_serial,
+                        f"{target_prefix}{profile.wire_separator}DXAN2F5V101557",
+                    )
 
     def test_blocks_unavailable_target_region(self) -> None:
-        with self.assertRaisesRegex(SerialTransactionError, "nicht verfügbar"):
+        with self.assertRaisesRegex(SerialTransactionError, "not available"):
             prepare_serial_transaction(
                 find_profile("4litegen2_itde_with_turn_signal"),
                 "5377700000000JUPOMA",
                 "US",
             )
 
-    def test_blocks_noop_target_region(self) -> None:
-        with self.assertRaisesRegex(SerialTransactionError, "entspricht bereits"):
-            prepare_serial_transaction(
-                find_profile("elite"),
-                "60545DXAN2F5QD02305",
-                "EU",
-            )
+    def test_allows_rewriting_the_current_region(self) -> None:
+        transaction = prepare_serial_transaction(
+            find_profile("elite"),
+            "60545DXAN2F5QD02305",
+            "EU",
+        )
+
+        self.assertEqual(transaction.current_serial, transaction.target_serial)
+        self.assertEqual(transaction.wire_serial, "60545DXAN2F5QD02305")
+        self.assertEqual(transaction.data_frame, build_serial_write_frame(transaction.wire_serial))
 
     def test_blocks_unknown_region_code(self) -> None:
-        with self.assertRaisesRegex(SerialTransactionError, "Zielregion"):
+        with self.assertRaisesRegex(SerialTransactionError, "target region"):
             prepare_serial_transaction(
                 find_profile("elite"),
                 "60543DXAN2F5QD02305",

@@ -55,14 +55,19 @@ class BorderPanel(tk.Frame):
 class SectionTitle(tk.Frame):
     def __init__(self, master: tk.Misc, number: str, title: str, *, background: str = PAPER) -> None:
         super().__init__(master, background=background)
+        self.number = number
         tk.Frame(self, width=20, height=1, background=AMBER).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(
+        self.label = tk.Label(
             self,
             text=f"§{number}  {title.upper()}",
             background=background,
             foreground=GRAVEL,
             font=("JetBrains Mono", 8, "bold"),
-        ).pack(side=tk.LEFT)
+        )
+        self.label.pack(side=tk.LEFT)
+
+    def set_title(self, title: str) -> None:
+        self.label.configure(text=f"§{self.number}  {title.upper()}")
 
 
 class StatusDot(tk.Canvas):
@@ -105,14 +110,15 @@ class ReadOnlyText(tk.Text):
         self.configure(state=tk.DISABLED)
 
 
-def labeled_value(master: tk.Misc, label: str, variable: tk.StringVar, *, row: int) -> None:
-    tk.Label(
+def labeled_value(master: tk.Misc, label: str, variable: tk.StringVar, *, row: int) -> tk.Label:
+    label_widget = tk.Label(
         master,
         text=label.upper(),
         background=LINEN,
         foreground=GRAVEL,
         font=("JetBrains Mono", 8, "bold"),
-    ).grid(row=row, column=0, sticky="nw", padx=(0, 16), pady=5)
+    )
+    label_widget.grid(row=row, column=0, sticky="nw", padx=(0, 16), pady=5)
     tk.Label(
         master,
         textvariable=variable,
@@ -123,6 +129,7 @@ def labeled_value(master: tk.Misc, label: str, variable: tk.StringVar, *, row: i
         anchor="w",
         wraplength=235,
     ).grid(row=row, column=1, sticky="ew", pady=5)
+    return label_widget
 
 
 def set_text_widget_colors(widget: tk.Text) -> None:

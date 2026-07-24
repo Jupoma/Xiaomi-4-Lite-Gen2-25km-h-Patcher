@@ -101,7 +101,7 @@ class ExternalOverrideTests(unittest.TestCase):
 
         self.assertEqual(find_profile("5_plus", loaded).display_name, "5 Plus Erstes Profil")
         self.assertEqual(len(loaded.warnings), 1)
-        self.assertIn("Doppelte Profil-ID", loaded.warnings[0])
+        self.assertIn("Duplicate profile ID", loaded.warnings[0])
         self.assertIn("b.json", loaded.warnings[0])
 
     def test_schema_rejects_bad_separator_protocol_and_region_prefix(self) -> None:

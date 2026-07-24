@@ -15,6 +15,13 @@ from typing import Any
 from PIL import Image, ImageTk
 
 from .diagnostic_window import DiagnosticWindow
+from .i18n import (
+    LANGUAGE_LABELS,
+    SUPPORTED_LANGUAGES,
+    language_from_label,
+    set_language,
+    translate as tr,
+)
 from .profiles import ProfileLoadResult, ScooterProfile, load_profiles
 from .protocol import (
     SerialNumberError,
@@ -25,6 +32,7 @@ from .protocol import (
 )
 from .resources import asset_path, bundled_profiles_path, external_profiles_path
 from .serial_transport import SerialEvent, SerialTransactionResult, write_transaction
+from .settings import load_language, save_language
 from .theme import (
     AMBER,
     BRICK,
@@ -92,9 +100,7 @@ def run_self_test() -> None:
     profile_result = load_profiles(bundled_profiles_path(), None)
     loaded_ids = {profile.id for profile in profile_result.profiles}
     if profile_result.warnings or not expected_ids.issubset(loaded_ids):
-        raise RuntimeError(
-            "Eingebettete Profile konnten im Selbsttest nicht vollständig geladen werden"
-        )
+        raise RuntimeError(tr("self_test_profiles"))
 
     for image_name in ("jupoma-logo.png", "jupoma.ico"):
         with Image.open(asset_path(image_name)) as image:
@@ -110,19 +116,65 @@ def run_self_test() -> None:
         "JetBrainsMono-Bold.ttf",
     ):
         if not asset_path("fonts", font_name).is_file():
-            raise RuntimeError(f"Eingebettete Schrift fehlt: {font_name}")
+            raise RuntimeError(tr("self_test_font", font=font_name))
 
 
 def run_ui_smoke_test() -> None:
-    """Construct the complete Tk UI once without showing an interactive window."""
+    """Construct and relocalize the complete Tk UI without showing it."""
 
     enable_windows_dpi_awareness()
     root = tk.Tk()
     root.withdraw()
+    diagnostics: DiagnosticWindow | None = None
     try:
-        RegionChangerApp(root)
-        root.update_idletasks()
+        app = RegionChangerApp(root)
+        original_language = app.language
+        diagnostics = DiagnosticWindow(
+            root,
+            port="COM-SMOKE",
+            baudrate=115200,
+            profile_name="UI Smoke Profile",
+            app_queue=app.app_queue,
+            on_active_changed=lambda _active: None,
+        )
+        app.diagnostics = diagnostics
+        diagnostics.window.withdraw()
+        language_order = tuple(
+            language for language in SUPPORTED_LANGUAGES if language != original_language
+        ) + (original_language,)
+        for language in language_order:
+            app.ack_var.set(True)
+            app._change_language(language, persist=False)
+            root.update_idletasks()
+            if app.ack_var.get():
+                raise RuntimeError("Language change did not reset the safety confirmation")
+            if app.safety_text_label.cget("text") != tr("safety_text"):
+                raise RuntimeError("Safety copy did not update during UI smoke test")
+            if diagnostics.monitor_label.cget("text") != tr("diag_monitor"):
+                raise RuntimeError("Diagnostics did not update during UI smoke test")
+
+        profile = app.current_profile()
+        if profile is None:
+            raise RuntimeError("No profile available during UI smoke test")
+        current_region = next(
+            region for region in REGIONS if profile.prefix_for(region) is not None
+        )
+        current_prefix = profile.prefix_for(current_region)
+        if current_prefix is None:
+            raise RuntimeError("Current region has no prefix during UI smoke test")
+        app.serial_var.set(f"{current_prefix}00000000JUPOMA")
+        app.target_region = current_region
+        app._recalculate()
+        current_button = app.region_buttons[current_region]
+        if current_button.instate(["disabled"]) or not current_button.instate(["selected"]):
+            raise RuntimeError("Current region is not selectable during UI smoke test")
+        for region, button in app.region_buttons.items():
+            expected_disabled = profile.prefix_for(region) is None
+            if button.instate(["disabled"]) != expected_disabled:
+                raise RuntimeError(f"Unexpected availability for region {region}")
     finally:
+        if diagnostics is not None and diagnostics.exists:
+            diagnostics.window.destroy()
         root.destroy()
 
 
@@ -131,6 +183,7 @@ class RegionChangerApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
+        self.language = set_language(load_language())
         self.fonts = configure_theme(root)
         self.root.title(f"{APP_NAME} · {__version__}")
         self.root.geometry("1000x900")
@@ -151,9 +204,12 @@ class RegionChangerApp:
         self.profile_var = tk.StringVar()
         self.port_var = tk.StringVar()
         self.serial_var = tk.StringVar()
+        self.language_var = tk.StringVar(value=LANGUAGE_LABELS[self.language])
         self.ack_var = tk.BooleanVar(value=False)
-        self.status_var = tk.StringVar(value="Bereit. Wähle Profil, Port und Seriennummer.")
-        self.serial_hint_var = tk.StringVar(value="5 Ziffern + 14 Zeichen. Ein Slash nach Stelle 5 ist erlaubt.")
+        self.status_var = tk.StringVar(value=tr("startup_status"))
+        self._status_translation: tuple[str, dict[str, object]] = ("startup_status", {})
+        self._status_state = "idle"
+        self.serial_hint_var = tk.StringVar(value=tr("serial_hint_empty"))
         self.preview_profile_var = tk.StringVar(value="—")
         self.preview_baud_var = tk.StringVar(value="—")
         self.preview_current_var = tk.StringVar(value="—")
@@ -167,6 +223,7 @@ class RegionChangerApp:
         if self.profiles:
             self.profile_var.set(next(iter(self.profile_by_label), ""))
         self._recalculate()
+        self._apply_language()
         self.root.after(self.POLL_INTERVAL_MS, self._poll_queue)
         self.root.after(250, self._show_profile_warnings)
 
@@ -210,39 +267,38 @@ class RegionChangerApp:
         warning = BorderPanel(outer, background=BRICK_LIGHT)
         warning.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(22, 0))
         warning.body.configure(padx=16, pady=12)
-        tk.Label(
+        self.safety_label = tk.Label(
             warning.body,
-            text="SICHERHEIT",
+            text=tr("safety"),
             background=BRICK_LIGHT,
             foreground=BRICK,
             font=self.fonts["meta"],
-        ).grid(row=0, column=0, sticky="nw", padx=(0, 16))
-        tk.Label(
+        )
+        self.safety_label.grid(row=0, column=0, sticky="nw", padx=(0, 16))
+        self.safety_text_label = tk.Label(
             warning.body,
-            text=(
-                "Das Dashboard arbeitet mit bis zu 21 V. Prüfe Modell, Pinbelegung und Adapter. "
-                "Eine Regionsänderung kann Zulassung und Garantie betreffen."
-            ),
+            text=tr("safety_text"),
             background=BRICK_LIGHT,
             foreground=SOIL,
             font=self.fonts["small"],
             justify=tk.LEFT,
             wraplength=760,
-        ).grid(row=0, column=1, sticky="ew")
+        )
+        self.safety_text_label.grid(row=0, column=1, sticky="ew")
         warning.body.columnconfigure(1, weight=1)
 
         actions = tk.Frame(outer, background=PAPER)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         self.ack_check = ttk.Checkbutton(
             actions,
-            text="Ich habe Modell, Verkabelung und Seriennummer geprüft.",
+            text=tr("acknowledge"),
             variable=self.ack_var,
             command=self._on_ack_changed,
         )
         self.ack_check.pack(side=tk.LEFT)
         self.send_button = ttk.Button(
             actions,
-            text="REGION SCHREIBEN",
+            text=tr("write_region"),
             style="Primary.TButton",
             command=self._begin_write,
         )
@@ -282,28 +338,48 @@ class RegionChangerApp:
             foreground=INK,
             font=self.fonts["display"],
         ).grid(row=0, column=1, sticky="sw", padx=(22, 0), pady=(8, 0))
-        tk.Label(
+        self.slogan_label = tk.Label(
             content,
-            text="Dein Scooter. Dein Setup.",
+            text=tr("slogan"),
             background=LINEN,
             foreground=SOIL,
             font=self.fonts["body_bold"],
-        ).grid(row=1, column=1, sticky="nw", padx=(22, 0), pady=(3, 0))
-        tk.Label(
+        )
+        self.slogan_label.grid(row=1, column=1, sticky="nw", padx=(22, 0), pady=(3, 0))
+        self.header_meta_label = tk.Label(
             content,
-            text="REGION · SERIENNUMMER · UART",
+            text=tr("header_meta"),
             background=LINEN,
             foreground=TOAST,
             font=self.fonts["meta"],
-        ).grid(row=2, column=1, sticky="nw", padx=(22, 0), pady=(10, 0))
+        )
+        self.header_meta_label.grid(row=2, column=1, sticky="nw", padx=(22, 0), pady=(10, 0))
+        self.language_label = tk.Label(
+            content,
+            text=tr("language"),
+            background=LINEN,
+            foreground=GRAVEL,
+            font=self.fonts["meta"],
+        )
+        self.language_label.grid(row=0, column=2, sticky="se", padx=(24, 0), pady=(10, 3))
+        self.language_combo = ttk.Combobox(
+            content,
+            textvariable=self.language_var,
+            values=list(LANGUAGE_LABELS.values()),
+            state="readonly",
+            width=12,
+        )
+        self.language_combo.grid(row=1, column=2, rowspan=2, sticky="ne", padx=(24, 0), pady=(0, 8))
 
     def _build_configuration(self, parent: tk.Misc) -> None:
-        SectionTitle(parent, "01", "Scooter und Verbindung").pack(fill=tk.X, pady=(0, 10))
+        self.connection_title = SectionTitle(parent, "01", tr("section_connection"))
+        self.connection_title.pack(fill=tk.X, pady=(0, 10))
         panel = BorderPanel(parent, background=PAPER)
         panel.pack(fill=tk.X)
         panel.body.configure(padx=16, pady=14)
 
-        tk.Label(panel.body, text="SCOOTERPROFIL", background=PAPER, foreground=GRAVEL, font=self.fonts["meta"]).grid(row=0, column=0, sticky="w")
+        self.profile_field_label = tk.Label(panel.body, text=tr("scooter_profile"), background=PAPER, foreground=GRAVEL, font=self.fonts["meta"])
+        self.profile_field_label.grid(row=0, column=0, sticky="w")
         self.profile_combo = ttk.Combobox(
             panel.body,
             textvariable=self.profile_var,
@@ -312,16 +388,18 @@ class RegionChangerApp:
         )
         self.profile_combo.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 13))
 
-        tk.Label(panel.body, text="COM-PORT", background=PAPER, foreground=GRAVEL, font=self.fonts["meta"]).grid(row=2, column=0, sticky="w")
+        self.port_field_label = tk.Label(panel.body, text=tr("com_port"), background=PAPER, foreground=GRAVEL, font=self.fonts["meta"])
+        self.port_field_label.grid(row=2, column=0, sticky="w")
         self.port_combo = ttk.Combobox(panel.body, textvariable=self.port_var, state="readonly")
         self.port_combo.grid(row=3, column=0, sticky="ew", pady=(5, 0))
-        self.refresh_button = ttk.Button(panel.body, text="AKTUALISIEREN", command=self.refresh_ports)
+        self.refresh_button = ttk.Button(panel.body, text=tr("refresh"), command=self.refresh_ports)
         self.refresh_button.grid(row=3, column=1, padx=(8, 0), sticky="ew", pady=(5, 0))
-        self.diagnostic_button = ttk.Button(panel.body, text="DIAGNOSE", command=self._open_diagnostics)
+        self.diagnostic_button = ttk.Button(panel.body, text=tr("diagnostics"), command=self._open_diagnostics)
         self.diagnostic_button.grid(row=3, column=2, padx=(8, 0), sticky="ew", pady=(5, 0))
         panel.body.columnconfigure(0, weight=1)
 
-        SectionTitle(parent, "02", "Vorhandene Seriennummer").pack(fill=tk.X, pady=(22, 10))
+        self.serial_title = SectionTitle(parent, "02", tr("section_serial"))
+        self.serial_title.pack(fill=tk.X, pady=(22, 10))
         serial_panel = BorderPanel(parent, background=PAPER)
         serial_panel.pack(fill=tk.X)
         serial_panel.body.configure(padx=16, pady=14)
@@ -337,7 +415,8 @@ class RegionChangerApp:
             anchor="w",
         ).pack(fill=tk.X, pady=(7, 0))
 
-        SectionTitle(parent, "03", "Zielregion").pack(fill=tk.X, pady=(22, 10))
+        self.target_title = SectionTitle(parent, "03", tr("section_target"))
+        self.target_title.pack(fill=tk.X, pady=(22, 10))
         regions = tk.Frame(parent, background=RULE, padx=1, pady=1)
         regions.pack(fill=tk.X)
         inner = tk.Frame(regions, background=RULE)
@@ -354,55 +433,107 @@ class RegionChangerApp:
             self.region_buttons[region] = button
 
     def _build_preview(self, parent: tk.Misc) -> None:
-        SectionTitle(parent, "04", "Schreibvorgang").pack(fill=tk.X, pady=(0, 10))
+        self.write_title = SectionTitle(parent, "04", tr("section_write"))
+        self.write_title.pack(fill=tk.X, pady=(0, 10))
         panel = BorderPanel(parent, background=LINEN)
         panel.pack(fill=tk.BOTH, expand=True)
         panel.body.configure(padx=18, pady=16)
         panel.body.columnconfigure(1, weight=1)
 
-        labeled_value(panel.body, "Profil", self.preview_profile_var, row=0)
-        labeled_value(panel.body, "Baudrate", self.preview_baud_var, row=1)
-        labeled_value(panel.body, "Aktuell", self.preview_current_var, row=2)
-        labeled_value(panel.body, "Ziel", self.preview_target_var, row=3)
-        labeled_value(panel.body, "UART-SN", self.preview_wire_var, row=4)
+        self.preview_labels = {
+            "profile": labeled_value(panel.body, tr("profile"), self.preview_profile_var, row=0),
+            "baudrate": labeled_value(panel.body, tr("baudrate"), self.preview_baud_var, row=1),
+            "current": labeled_value(panel.body, tr("current"), self.preview_current_var, row=2),
+            "target": labeled_value(panel.body, tr("target"), self.preview_target_var, row=3),
+            "uart_serial": labeled_value(panel.body, tr("uart_serial"), self.preview_wire_var, row=4),
+        }
 
         tk.Frame(panel.body, background=RULE, height=1).grid(row=5, column=0, columnspan=2, sticky="ew", pady=14)
-        tk.Label(
+        self.data_frame_label = tk.Label(
             panel.body,
-            text="DATENFRAME",
+            text=tr("data_frame"),
             background=LINEN,
             foreground=GRAVEL,
             font=self.fonts["meta"],
-        ).grid(row=6, column=0, columnspan=2, sticky="w")
+        )
+        self.data_frame_label.grid(row=6, column=0, columnspan=2, sticky="w")
         self.data_frame_text = ReadOnlyText(panel.body, lines=5, background=LINEN)
         self.data_frame_text.grid(row=7, column=0, columnspan=2, sticky="nsew", pady=(6, 12))
-        tk.Label(
+        self.commit_frame_label = tk.Label(
             panel.body,
-            text="COMMIT / ENDBEFEHL",
+            text=tr("commit_frame"),
             background=LINEN,
             foreground=GRAVEL,
             font=self.fonts["meta"],
-        ).grid(row=8, column=0, columnspan=2, sticky="w")
+        )
+        self.commit_frame_label.grid(row=8, column=0, columnspan=2, sticky="w")
         self.commit_frame_text = ReadOnlyText(panel.body, lines=2, background=LINEN)
         self.commit_frame_text.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(6, 12))
-        tk.Label(
+        self.no_ack_label = tk.Label(
             panel.body,
-            text=(
-                "Die App prüft Übertragung und Byteanzahl. Der Scooter sendet kein "
-                "belastbares Schreib-ACK. Prüfe die Region nach einem Neustart."
-            ),
+            text=tr("no_ack_info"),
             background=LINEN,
             foreground=SOIL,
             font=self.fonts["small"],
             justify=tk.LEFT,
             wraplength=340,
-        ).grid(row=10, column=0, columnspan=2, sticky="sw", pady=(8, 0))
+        )
+        self.no_ack_label.grid(row=10, column=0, columnspan=2, sticky="sw", pady=(8, 0))
         panel.body.rowconfigure(7, weight=1)
 
     def _bind_state(self) -> None:
         self.profile_var.trace_add("write", lambda *_: self._on_profile_changed())
         self.port_var.trace_add("write", lambda *_: self._on_port_changed())
         self.serial_var.trace_add("write", lambda *_: self._on_serial_changed())
+        self.language_combo.bind("<<ComboboxSelected>>", self._on_language_changed)
+
+    def _on_language_changed(self, _event: object = None) -> None:
+        next_language = language_from_label(self.language_var.get())
+        self._change_language(next_language, persist=True)
+
+    def _change_language(self, next_language: str, *, persist: bool) -> None:
+        if next_language == self.language:
+            return
+        self.language = set_language(next_language)
+        if persist:
+            save_language(self.language)
+        self._reset_confirmation()
+        self._apply_language()
+
+    def _apply_language(self) -> None:
+        set_language(self.language)
+        self.language_var.set(LANGUAGE_LABELS[self.language])
+        self.safety_label.configure(text=tr("safety"))
+        self.safety_text_label.configure(text=tr("safety_text"))
+        self.ack_check.configure(text=tr("acknowledge"))
+        self.send_button.configure(text=tr("write_region"))
+        self.slogan_label.configure(text=tr("slogan"))
+        self.header_meta_label.configure(text=tr("header_meta"))
+        self.language_label.configure(text=tr("language"))
+        self.connection_title.set_title(tr("section_connection"))
+        self.profile_field_label.configure(text=tr("scooter_profile"))
+        self.port_field_label.configure(text=tr("com_port"))
+        self.refresh_button.configure(text=tr("refresh"))
+        self.diagnostic_button.configure(text=tr("diagnostics"))
+        self.serial_title.set_title(tr("section_serial"))
+        self.target_title.set_title(tr("section_target"))
+        self.write_title.set_title(tr("section_write"))
+        for key, widget in self.preview_labels.items():
+            widget.configure(text=tr(key).upper())
+        self.data_frame_label.configure(text=tr("data_frame"))
+        self.commit_frame_label.configure(text=tr("commit_frame"))
+        self.no_ack_label.configure(text=tr("no_ack_info"))
+        key, values = self._status_translation
+        self.status_var.set(tr(key, **values))
+        self.status_canvas.itemconfigure(
+            self.status_dot,
+            fill={"working": AMBER, "ok": MOSS, "error": BRICK}.get(
+                self._status_state, GRAVEL
+            ),
+        )
+        self._recalculate()
+        if self.diagnostics is not None and self.diagnostics.exists:
+            self.diagnostics.set_language()
 
     def current_profile(self) -> ScooterProfile | None:
         return self.profile_by_label.get(self.profile_var.get())
@@ -419,12 +550,12 @@ class RegionChangerApp:
         except Exception as exc:
             ports = []
             if not initial:
-                messagebox.showerror("COM-Ports nicht verfügbar", str(exc), parent=self.root)
+                messagebox.showerror(tr("ports_unavailable_title"), str(exc), parent=self.root)
 
         labels: list[str] = []
         mapping: dict[str, str] = {}
         for port in ports:
-            description = str(getattr(port, "description", "") or "Serieller Port")
+            description = str(getattr(port, "description", "") or tr("serial_port"))
             label = f"{port.device} · {description}"
             labels.append(label)
             mapping[label] = port.device
@@ -436,10 +567,8 @@ class RegionChangerApp:
             selected = labels[0]
         self.port_var.set(selected)
         if not initial:
-            self._set_status(
-                f"{len(labels)} COM-Port{'s' if len(labels) != 1 else ''} gefunden.",
-                "idle",
-            )
+            key = "ports_found_one" if len(labels) == 1 else "ports_found_many"
+            self._set_status_key(key, "idle", count=len(labels))
 
     def _on_profile_changed(self) -> None:
         if self.diagnostics is not None and self.diagnostics.exists and not self.diagnostics.active:
@@ -502,24 +631,20 @@ class RegionChangerApp:
                     (region for region in REGIONS if profile.prefix_for(region) == prefix),
                     "",
                 )
-                if not current_region:
-                    raise SerialTransactionError(
-                        f"Präfix {prefix} gehört nicht zum gewählten Profil."
-                    )
                 serial_valid = True
-                self.serial_hint_var.set(
-                    f"Erkannt: Region {current_region}. Der 14-stellige Rest bleibt unverändert."
-                )
+                if current_region:
+                    self.serial_hint_var.set(tr("serial_known", region=current_region))
+                else:
+                    self.serial_hint_var.set(tr("serial_unknown", prefix=prefix))
             except (SerialNumberError, SerialTransactionError, ValueError) as exc:
                 self.serial_hint_var.set(str(exc))
         elif not raw_serial:
-            self.serial_hint_var.set("5 Ziffern + 14 Zeichen. Ein Slash nach Stelle 5 ist erlaubt.")
+            self.serial_hint_var.set(tr("serial_hint_empty"))
 
         self.preview_current_var.set(display_serial(canonical))
         if self.target_region and (
             profile is None
             or profile.prefix_for(self.target_region) is None
-            or self.target_region == current_region
         ):
             self.target_region = ""
 
@@ -534,7 +659,7 @@ class RegionChangerApp:
         if self.transaction is None:
             self.preview_target_var.set("—")
             self.preview_wire_var.set("—")
-            self.data_frame_text.set_text("Zielregion wählen.")
+            self.data_frame_text.set_text(tr("choose_target"))
             self.commit_frame_text.set_text("5A 01 97 01 00 EB B0")
         else:
             self.preview_target_var.set(display_serial(self.transaction.target_serial))
@@ -560,11 +685,12 @@ class RegionChangerApp:
                 continue
             prefix = profile.prefix_for(region)
             if prefix is None:
-                button.configure(text=f"{region}\nNICHT VERFÜGBAR")
+                button.configure(text=f"{region}\n{tr('unavailable')}")
                 button.state(["disabled"])
             elif region == current_region:
-                button.configure(text=f"{region} · AKTUELL\n{prefix}")
-                button.state(["disabled"])
+                button.configure(text=f"{region} · {tr('current_region')}\n{prefix}")
+                if region == self.target_region:
+                    button.state(["selected"])
             else:
                 button.configure(text=f"{region}\n{prefix}")
                 if region == self.target_region:
@@ -594,18 +720,27 @@ class RegionChangerApp:
         port = self.current_port()
         transaction = self.transaction
         if not self.ui_state.can_write or profile is None or not port or transaction is None:
-            messagebox.showwarning("Noch nicht bereit", self.ui_state.block_reason(), parent=self.root)
+            messagebox.showwarning(
+                tr("not_ready_title"), self.ui_state.block_reason(), parent=self.root
+            )
             return
 
+        same_note = (
+            tr("same_region_note")
+            if transaction.current_serial[:5] == transaction.target_serial[:5]
+            else ""
+        )
         confirmed = messagebox.askokcancel(
-            "Region schreiben",
-            (
-                f"Profil: {profile.display_name}\n"
-                f"Port: {port} · {profile.baudrate} Baud\n"
-                f"Vorhanden: {display_serial(transaction.current_serial)}\n"
-                f"Ziel: {display_serial(transaction.target_serial)} ({transaction.target_region})\n\n"
-                "Die App sendet Datenframe und Commit genau einmal. Es gibt kein "
-                "belastbares Schreib-ACK. Scooter danach vollständig neu starten."
+            tr("write_confirm_title"),
+            tr(
+                "write_confirm_body",
+                profile=profile.display_name,
+                port=port,
+                baudrate=profile.baudrate,
+                current=display_serial(transaction.current_serial),
+                target=display_serial(transaction.target_serial),
+                region=transaction.target_region,
+                same_note=same_note,
             ),
             icon="warning",
             parent=self.root,
@@ -615,7 +750,7 @@ class RegionChangerApp:
 
         self.ui_state = self.ui_state.updated(busy=True)
         self._refresh_ready_state()
-        self._set_status("COM-Port wird geöffnet …", "working")
+        self._set_status_key("status_opening", "working")
         self._write_thread = threading.Thread(
             target=self._write_worker,
             args=(port, transaction),
@@ -640,33 +775,29 @@ class RegionChangerApp:
 
     def _handle_write_event(self, event: SerialEvent) -> None:
         messages = {
-            "opening": "COM-Port wird geöffnet …",
-            "opened": "Port offen. Verbindung stabilisiert sich …",
-            "completed": "Daten- und Commitframe übertragen.",
-            "closed": "COM-Port geschlossen.",
+            "opening": "status_opening",
+            "opened": "status_opened",
+            "completed": "status_completed",
+            "closed": "status_closed",
         }
         if event.kind == "frame_written":
-            label = "Datenframe" if event.phase == "data" else "Commitframe"
-            self._set_status(f"{label} vollständig gesendet.", "working")
+            key = "data_frame_sent" if event.phase == "data" else "commit_frame_sent"
+            self._set_status_key(key, "working")
         elif event.kind in messages:
-            self._set_status(messages[event.kind], "working")
+            self._set_status_key(messages[event.kind], "working")
 
     def _handle_write_success(self, result: SerialTransactionResult, transaction: SerialTransaction) -> None:
         self.ui_state = self.ui_state.updated(busy=False)
         self.ack_var.set(False)
         self._refresh_ready_state()
-        self._set_status(
-            "Übertragung abgeschlossen – Scooter neu starten und Region prüfen.",
-            "ok",
-        )
+        self._set_status_key("success_status", "ok")
         messagebox.showinfo(
-            "Übertragung abgeschlossen",
-            (
-                f"{result.data_bytes_written} Byte Datenframe und "
-                f"{result.commit_bytes_written} Byte Commit wurden übertragen.\n\n"
-                f"Zielregion: {transaction.target_region}\n"
-                "Scooter vollständig ausschalten, neu starten und Region prüfen. "
-                "Der Scooter bestätigt den Schreibvorgang nicht zuverlässig."
+            tr("success_title"),
+            tr(
+                "success_body",
+                data_bytes=result.data_bytes_written,
+                commit_bytes=result.commit_bytes_written,
+                region=transaction.target_region,
             ),
             parent=self.root,
         )
@@ -675,10 +806,10 @@ class RegionChangerApp:
         self.ui_state = self.ui_state.updated(busy=False)
         self.ack_var.set(False)
         self._refresh_ready_state()
-        self._set_status("Übertragung abgebrochen. Es wurde nicht automatisch wiederholt.", "error")
+        self._set_status_key("failure_status", "error")
         messagebox.showerror(
-            "Übertragung fehlgeschlagen",
-            f"{error}\n\nEs wurde kein automatischer Wiederholungsversuch ausgeführt.",
+            tr("failure_title"),
+            tr("failure_body", error=error),
             parent=self.root,
         )
 
@@ -686,12 +817,14 @@ class RegionChangerApp:
         profile = self.current_profile()
         port = self.current_port()
         if self.ui_state.busy:
-            messagebox.showwarning("Port belegt", "Eine Übertragung läuft.", parent=self.root)
+            messagebox.showwarning(
+                tr("port_busy_title"), tr("port_busy_body"), parent=self.root
+            )
             return
         if profile is None or not port:
             messagebox.showwarning(
-                "Diagnose nicht bereit",
-                "Wähle zuerst ein Scooterprofil und einen COM-Port.",
+                tr("diagnostics_not_ready_title"),
+                tr("diagnostics_not_ready_body"),
                 parent=self.root,
             )
             return
@@ -701,8 +834,8 @@ class RegionChangerApp:
                 return
             if self.diagnostics.active:
                 messagebox.showerror(
-                    "Portfreigabe unbestätigt",
-                    "Schreiben bleibt aus Sicherheitsgründen gesperrt. Starte die App neu.",
+                    tr("port_release_title"),
+                    tr("port_release_body"),
                     parent=self.root,
                 )
                 return
@@ -719,9 +852,9 @@ class RegionChangerApp:
         self.ui_state = self.ui_state.updated(diagnostics_active=active)
         self._refresh_ready_state()
         if active:
-            self._set_status("Diagnose belegt den COM-Port exklusiv.", "working")
+            self._set_status_key("diagnostics_busy", "working")
         elif not self.ui_state.busy:
-            self._set_status("Diagnose beendet. Port ist wieder frei.", "idle")
+            self._set_status_key("diagnostics_ended", "idle")
 
     def _poll_queue(self) -> None:
         try:
@@ -743,25 +876,26 @@ class RegionChangerApp:
         if self.root.winfo_exists():
             self.root.after(self.POLL_INTERVAL_MS, self._poll_queue)
 
-    def _set_status(self, message: str, state: str) -> None:
+    def _set_status_key(self, key: str, state: str, **values: object) -> None:
+        self._status_translation = (key, dict(values))
+        self._status_state = state
         color = {"working": AMBER, "ok": MOSS, "error": BRICK}.get(state, GRAVEL)
-        self.status_var.set(message)
+        self.status_var.set(tr(key, **values))
         self.status_canvas.itemconfigure(self.status_dot, fill=color)
 
     def _show_profile_warnings(self) -> None:
         if self.profile_result.warnings:
             messagebox.showwarning(
-                "Profilhinweise",
-                "Einige externe Profildateien wurden nicht geladen:\n\n"
-                + "\n".join(self.profile_result.warnings),
+                tr("profile_warnings_title"),
+                tr("profile_warnings_body", warnings="\n".join(self.profile_result.warnings)),
                 parent=self.root,
             )
 
     def _on_close(self) -> None:
         if self.ui_state.busy:
             messagebox.showwarning(
-                "Übertragung läuft",
-                "Warte, bis der COM-Port geschlossen wurde.",
+                tr("transfer_running_title"),
+                tr("transfer_running_body"),
                 parent=self.root,
             )
             return
@@ -784,7 +918,7 @@ def main() -> None:
     except Exception as exc:
         root.withdraw()
         messagebox.showerror(
-            "LEQI Region Changer konnte nicht starten",
+            tr("app_start_failed"),
             str(exc),
             parent=root,
         )

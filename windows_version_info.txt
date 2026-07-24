@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 1),
-    prodvers=(2, 0, 0, 1),
+    filevers=(2, 0, 0, 2),
+    prodvers=(2, 0, 0, 2),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'Jupoma'),
           StringStruct(u'FileDescription', u'LEQI Region Changer'),
-          StringStruct(u'FileVersion', u'2.0.0-rc.1'),
+          StringStruct(u'FileVersion', u'2.0.0-rc.2'),
           StringStruct(u'InternalName', u'LEQI Region Changer'),
           StringStruct(u'LegalCopyright', u'Copyright © 2026 Jupoma'),
           StringStruct(u'OriginalFilename', u'LEQI Region Changer.exe'),
           StringStruct(u'ProductName', u'LEQI Region Changer'),
-          StringStruct(u'ProductVersion', u'2.0.0-rc.1')
+          StringStruct(u'ProductVersion', u'2.0.0-rc.2')
         ]
       )
     ]),

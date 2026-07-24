@@ -7,14 +7,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
-$ReleaseVersion = "2.0.0-rc.1"
+$ReleaseVersion = "2.0.0-rc.2"
 $ArtifactBaseName = "LEQI-Region-Changer-V$ReleaseVersion-win64"
+$SourceArtifactBaseName = "LEQI-Region-Changer-V$ReleaseVersion-source"
 $VenvPath = Join-Path $ProjectRoot ".venv-build"
 $BuildPath = Join-Path $ProjectRoot "build"
 $DistPath = Join-Path $ProjectRoot "dist"
 $ReleasePath = Join-Path $ProjectRoot "release"
 $PackagePath = Join-Path $BuildPath $ArtifactBaseName
+$SourcePackagePath = Join-Path $BuildPath $SourceArtifactBaseName
 $ZipPath = Join-Path $ReleasePath "$ArtifactBaseName.zip"
+$SourceZipPath = Join-Path $ReleasePath "$SourceArtifactBaseName.zip"
 $ReleaseExePath = Join-Path $ReleasePath "LEQI Region Changer.exe"
 $ChecksumPath = Join-Path $ReleasePath "SHA256SUMS.txt"
 $SpecPath = Join-Path $ProjectRoot "LEQI Region Changer.spec"
@@ -47,6 +50,39 @@ function Remove-ProjectItem {
     Assert-ProjectChildPath -Path $Path
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
+    }
+}
+
+function Copy-SourceTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Required source directory is missing: $Source"
+    }
+    Assert-ProjectChildPath -Path $Destination
+    $sourceRoot = [System.IO.Path]::GetFullPath($Source).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Get-ChildItem -LiteralPath $Source -Recurse -File | Where-Object {
+        $_.Extension -notin @(".pyc", ".pyo") -and
+        $_.FullName -notmatch "[\\/]__pycache__[\\/]"
+    } | ForEach-Object {
+        $sourceFilePath = [System.IO.Path]::GetFullPath($_.FullName)
+        if (-not $sourceFilePath.StartsWith($sourceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to package a file outside its source directory: $sourceFilePath"
+        }
+        $relativePath = $sourceFilePath.Substring($sourceRoot.Length)
+        $destinationPath = Join-Path $Destination $relativePath
+        $destinationDirectory = [System.IO.Path]::GetDirectoryName($destinationPath)
+        if (-not [string]::IsNullOrEmpty($destinationDirectory)) {
+            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $_.FullName -Destination $destinationPath
     }
 }
 
@@ -159,7 +195,7 @@ try {
     ))
 
     New-Item -ItemType Directory -Path $ReleasePath -Force | Out-Null
-    foreach ($staleArtifact in @($ZipPath, $ReleaseExePath, $ChecksumPath)) {
+    foreach ($staleArtifact in @($ZipPath, $SourceZipPath, $ChecksumPath)) {
         Assert-ProjectChildPath -Path $staleArtifact
         if (Test-Path -LiteralPath $staleArtifact) {
             Remove-Item -LiteralPath $staleArtifact -Force
@@ -248,17 +284,72 @@ try {
         $PackagePath,
         $ZipPath
     )
-    Copy-Item -LiteralPath $BuiltExe -Destination $ReleaseExePath
+
+    Remove-ProjectItem -Path $SourcePackagePath
+    New-Item -ItemType Directory -Path $SourcePackagePath -Force | Out-Null
+    foreach ($sourceDirectoryName in @(
+        "assets",
+        "leqi_region_changer",
+        "profiles",
+        "tests",
+        "THIRD_PARTY_LICENSES",
+        "tools"
+    )) {
+        Copy-SourceTree `
+            -Source (Join-Path $ProjectRoot $sourceDirectoryName) `
+            -Destination (Join-Path $SourcePackagePath $sourceDirectoryName)
+    }
+    foreach ($sourceFileName in @(
+        ".gitignore",
+        "LEQI Region Changer.pyw",
+        "LEQI Region Changer.spec",
+        "LICENSE",
+        "README.md",
+        "release-notes-v2.0.0-rc.2.md",
+        "requirements.txt",
+        "requirements-build.txt",
+        "THIRD_PARTY_NOTICES.md",
+        "windows_version_info.txt",
+        "build.ps1"
+    )) {
+        $sourceFile = Join-Path $ProjectRoot $sourceFileName
+        if (-not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+            throw "Required source file is missing: $sourceFile"
+        }
+        Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $SourcePackagePath $sourceFileName)
+    }
+    Invoke-Checked -Executable $VenvPython -Arguments @(
+        $ZipBuilderPath,
+        $SourcePackagePath,
+        $SourceZipPath
+    )
+
+    $builtExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $BuiltExe).Hash
+    if (Test-Path -LiteralPath $ReleaseExePath -PathType Leaf) {
+        $existingExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ReleaseExePath).Hash
+        if ($existingExeHash -ne $builtExeHash) {
+            Copy-Item -LiteralPath $BuiltExe -Destination $ReleaseExePath -Force
+        }
+    }
+    else {
+        Copy-Item -LiteralPath $BuiltExe -Destination $ReleaseExePath
+    }
 
     $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ZipPath).Hash
+    $sourceZipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SourceZipPath).Hash
     $exeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ReleaseExePath).Hash
+    if ($exeHash -ne $builtExeHash) {
+        throw "Release executable does not match the verified build output."
+    }
     Set-Content -LiteralPath $ChecksumPath -Encoding ASCII -Value @(
         "$exeHash  $([System.IO.Path]::GetFileName($ReleaseExePath))",
-        "$zipHash  $([System.IO.Path]::GetFileName($ZipPath))"
+        "$zipHash  $([System.IO.Path]::GetFileName($ZipPath))",
+        "$sourceZipHash  $([System.IO.Path]::GetFileName($SourceZipPath))"
     )
 
     Write-Host "Build complete."
     Write-Host "Artifact: $ZipPath"
+    Write-Host "Source: $SourceZipPath"
     Write-Host "Executable: $ReleaseExePath"
     Write-Host "Checksums: $ChecksumPath"
 }
