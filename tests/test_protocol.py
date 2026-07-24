@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from leqi_region_changer.profiles import find_profile
+from leqi_region_changer.profiles import BASELINE_PROFILES, find_profile
 from leqi_region_changer.protocol import (
     COMMIT_FRAME,
     SerialNumberError,
@@ -30,6 +30,16 @@ class CrcAndFrameGoldenTests(unittest.TestCase):
         self.assertEqual(frame[0:5], bytes.fromhex("5A 01 97 15 01"))
         self.assertEqual(frame[-2:], bytes.fromhex("DD 95"))
 
+    def test_6lite_eu_len14_golden_crc_59a7(self) -> None:
+        frame = build_serial_write_frame("72365DXAN2L5ZH00502")
+        self.assertEqual(frame[0:5], bytes.fromhex("5A 01 97 14 01"))
+        self.assertEqual(frame[-2:], bytes.fromhex("59 A7"))
+
+    def test_6_eu_slash_len15_golden_crc_19f5(self) -> None:
+        frame = build_serial_write_frame("72361/DXAN2L5ZN00191")
+        self.assertEqual(frame[0:5], bytes.fromhex("5A 01 97 15 01"))
+        self.assertEqual(frame[-2:], bytes.fromhex("19 F5"))
+
     def test_elite_eu_golden_crc_d5a5(self) -> None:
         frame = build_serial_write_frame("60545DXAN2F5QD02305")
         self.assertEqual(frame[0:5], bytes.fromhex("5A 01 97 14 01"))
@@ -51,6 +61,18 @@ class CrcAndFrameGoldenTests(unittest.TestCase):
                 "66232/DXAN2F5V101557",
                 "66230/DXAN2F5V101557",
                 "5A 01 97 15 01 36 36 32 33 30 2F 44 58 41 4E 32 46 35 56 31 30 31 35 35 37 DD 95",
+            ),
+            (
+                "6_lite",
+                "72364DXAN2L5ZH00502",
+                "72365DXAN2L5ZH00502",
+                "5A 01 97 14 01 37 32 33 36 35 44 58 41 4E 32 4C 35 5A 48 30 30 35 30 32 59 A7",
+            ),
+            (
+                "6",
+                "72359/DXAN2L5ZN00191",
+                "72361/DXAN2L5ZN00191",
+                "5A 01 97 15 01 37 32 33 36 31 2F 44 58 41 4E 32 4C 35 5A 4E 30 30 31 39 31 19 F5",
             ),
             (
                 "elite",
@@ -125,16 +147,11 @@ class PrepareTransactionTests(unittest.TestCase):
         self.assertEqual(transaction.data_frame, build_serial_write_frame(transaction.wire_serial))
 
     def test_unknown_prefix_can_be_replaced_by_every_configured_target(self) -> None:
-        for profile_id in (
-            "4litegen2_itde_with_turn_signal",
-            "5_plus",
-            "elite",
-        ):
-            profile = find_profile(profile_id)
+        for profile in BASELINE_PROFILES:
             for target_region, target_prefix in profile.regions.items():
                 if target_prefix is None:
                     continue
-                with self.subTest(profile=profile_id, region=target_region):
+                with self.subTest(profile=profile.id, region=target_region):
                     transaction = prepare_region_change(
                         profile,
                         "99999DXAN2F5V101557",

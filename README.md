@@ -6,7 +6,7 @@ Windows application for changing the five-digit region prefix of a supported
 LEQI scooter serial number over UART. The individual 14-character serial suffix
 is retained.
 
-Current release: `2.0.0-rc.2`
+Current release: `2.0.0-rc.3`
 
 App languages: `English` · `Deutsch` · `Italiano`
 
@@ -74,6 +74,8 @@ reference material, not a substitute for measurement.
 | --- | ---: | --- | --- | --- | --- |
 | Xiaomi 4 Lite Gen2 DE/IT version with turn signals | `115200` | `53777` | `53937` | Not available | None |
 | Xiaomi 5 Plus | `19200` | `66232` | `66230` | `66227` | `/` |
+| Xiaomi Electric Scooter 6 Lite | `19200` | `72367` | `72365` | `72364` | None |
+| Xiaomi Electric Scooter 6 | `19200` | `72363` | `72361` | `72359` | `/` |
 | Xiaomi Electric Scooter Elite | `19200` | `60543` | `60545` | `60457` | None |
 
 The Xiaomi 4 Lite Gen2 remains the primary model documented in this repository.
@@ -94,8 +96,8 @@ and download the assets for the same version.
 | File | Purpose |
 | --- | --- |
 | `LEQI Region Changer.exe` | Standalone Windows application |
-| `LEQI-Region-Changer-V2.0.0-rc.2-win64.zip` | EXE, profiles and license files |
-| `LEQI-Region-Changer-V2.0.0-rc.2-source.zip` | Python source, tests, profiles, assets and build files |
+| `LEQI-Region-Changer-V2.0.0-rc.3-win64.zip` | EXE, profiles and license files |
+| `LEQI-Region-Changer-V2.0.0-rc.3-source.zip` | Python source, tests, profiles, assets and build files |
 | `SHA256SUMS.txt` | SHA-256 checksums for all three release assets |
 
 Verify the checksum before starting the application:
@@ -332,8 +334,8 @@ embedded self-test and multilingual UI smoke test, and writes:
 
 ```text
 release/LEQI Region Changer.exe
-release/LEQI-Region-Changer-V2.0.0-rc.2-win64.zip
-release/LEQI-Region-Changer-V2.0.0-rc.2-source.zip
+release/LEQI-Region-Changer-V2.0.0-rc.3-win64.zip
+release/LEQI-Region-Changer-V2.0.0-rc.3-source.zip
 release/SHA256SUMS.txt
 ```
 

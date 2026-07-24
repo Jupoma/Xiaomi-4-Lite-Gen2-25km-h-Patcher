@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
-$ReleaseVersion = "2.0.0-rc.2"
+$ReleaseVersion = "2.0.0-rc.3"
 $ArtifactBaseName = "LEQI-Region-Changer-V$ReleaseVersion-win64"
 $SourceArtifactBaseName = "LEQI-Region-Changer-V$ReleaseVersion-source"
 $VenvPath = Join-Path $ProjectRoot ".venv-build"
@@ -193,6 +193,10 @@ try {
         "-c",
         "import platform, struct, sys; machine = platform.machine().lower(); ok = sys.version_info[:2] == (3, 12) and struct.calcsize('P') == 8 and machine in ('amd64', 'x86_64'); raise SystemExit(0 if ok else 'Python 3.12 AMD64/x64 is required.')"
     ))
+    Invoke-Checked -Executable $bootstrapExecutable -Arguments ($bootstrapPrefix + @(
+        "-c",
+        "import tkinter as tk; root = tk.Tk(); root.withdraw(); root.update_idletasks(); root.destroy()"
+    ))
 
     New-Item -ItemType Directory -Path $ReleasePath -Force | Out-Null
     foreach ($staleArtifact in @($ZipPath, $SourceZipPath, $ChecksumPath)) {
@@ -305,7 +309,7 @@ try {
         "LEQI Region Changer.spec",
         "LICENSE",
         "README.md",
-        "release-notes-v2.0.0-rc.2.md",
+        "release-notes-v2.0.0-rc.3.md",
         "requirements.txt",
         "requirements-build.txt",
         "THIRD_PARTY_NOTICES.md",

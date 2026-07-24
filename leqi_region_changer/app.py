@@ -9,8 +9,9 @@ import re
 import sys
 import threading
 import tkinter as tk
+import traceback
 from tkinter import messagebox, ttk
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
@@ -95,6 +96,8 @@ def run_self_test() -> None:
     expected_ids = {
         "4litegen2_itde_with_turn_signal",
         "5_plus",
+        "6_lite",
+        "6",
         "elite",
     }
     profile_result = load_profiles(bundled_profiles_path(), None)
@@ -176,6 +179,18 @@ def run_ui_smoke_test() -> None:
         if diagnostics is not None and diagnostics.exists:
             diagnostics.window.destroy()
         root.destroy()
+
+
+def run_command_line_test(test: Callable[[], None]) -> None:
+    """Run a hidden executable check with an explicit process exit code."""
+
+    try:
+        test()
+    except Exception:
+        if sys.stderr is not None:
+            traceback.print_exc()
+        raise SystemExit(1)
+    raise SystemExit(0)
 
 
 class RegionChangerApp:
@@ -906,11 +921,9 @@ class RegionChangerApp:
 
 def main() -> None:
     if "--self-test" in sys.argv:
-        run_self_test()
-        return
+        run_command_line_test(run_self_test)
     if "--ui-smoke-test" in sys.argv:
-        run_ui_smoke_test()
-        return
+        run_command_line_test(run_ui_smoke_test)
     enable_windows_dpi_awareness()
     root = tk.Tk()
     try:

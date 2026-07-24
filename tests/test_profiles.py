@@ -22,7 +22,7 @@ class BaselineProfileTests(unittest.TestCase):
     def test_baseline_profiles_have_exact_order_and_values(self) -> None:
         self.assertEqual(
             [profile.id for profile in BASELINE_PROFILES],
-            ["4litegen2_itde_with_turn_signal", "5_plus", "elite"],
+            ["4litegen2_itde_with_turn_signal", "5_plus", "6_lite", "6", "elite"],
         )
 
         four_lite = find_profile("4litegen2_itde_with_turn_signal")
@@ -37,6 +37,24 @@ class BaselineProfileTests(unittest.TestCase):
         self.assertEqual(
             dict(five_plus.regions),
             {"DE": "66232", "EU": "66230", "US": "66227"},
+        )
+
+        six_lite = find_profile("6_lite")
+        self.assertEqual(six_lite.display_name, "6 Lite")
+        self.assertEqual(six_lite.baudrate, 19200)
+        self.assertEqual(six_lite.wire_separator, "")
+        self.assertEqual(
+            dict(six_lite.regions),
+            {"DE": "72367", "EU": "72365", "US": "72364"},
+        )
+
+        six = find_profile("6")
+        self.assertEqual(six.display_name, "6")
+        self.assertEqual(six.baudrate, 19200)
+        self.assertEqual(six.wire_separator, "/")
+        self.assertEqual(
+            dict(six.regions),
+            {"DE": "72363", "EU": "72361", "US": "72359"},
         )
 
         elite = find_profile("elite")
