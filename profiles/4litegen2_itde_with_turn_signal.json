@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "4litegen2_itde_with_turn_signal",
+  "display_name": "4 Lite Gen2 DE/IT Version with turn Signals",
+  "baudrate": 115200,
+  "protocol": "leqi_serial_write_v1",
+  "wire_separator": "",
+  "regions": {
+    "DE": "53777",
+    "EU": "53937",
+    "US": null
+  }
+}

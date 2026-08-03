@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "elite",
+  "display_name": "Elite",
+  "baudrate": 19200,
+  "protocol": "leqi_serial_write_v1",
+  "wire_separator": "",
+  "regions": {
+    "DE": "60543",
+    "EU": "60545",
+    "US": "60457"
+  }
+}

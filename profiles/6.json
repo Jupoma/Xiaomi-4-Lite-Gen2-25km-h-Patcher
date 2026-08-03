@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "6",
+  "display_name": "6",
+  "baudrate": 19200,
+  "protocol": "leqi_serial_write_v1",
+  "wire_separator": "/",
+  "regions": {
+    "DE": "72363",
+    "EU": "72361",
+    "US": "72359"
+  }
+}

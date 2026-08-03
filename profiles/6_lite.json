@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "6_lite",
+  "display_name": "6 Lite",
+  "baudrate": 19200,
+  "protocol": "leqi_serial_write_v1",
+  "wire_separator": "",
+  "regions": {
+    "DE": "72367",
+    "EU": "72365",
+    "US": "72364"
+  }
+}

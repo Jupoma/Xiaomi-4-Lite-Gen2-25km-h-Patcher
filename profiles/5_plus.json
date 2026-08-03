@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "5_plus",
+  "display_name": "5 Plus",
+  "baudrate": 19200,
+  "protocol": "leqi_serial_write_v1",
+  "wire_separator": "/",
+  "regions": {
+    "DE": "66232",
+    "EU": "66230",
+    "US": "66227"
+  }
+}
